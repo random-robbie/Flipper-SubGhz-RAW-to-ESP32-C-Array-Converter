@@ -89,36 +89,18 @@ def convert_binraw_to_timings(hex_data, te, bit_count=None):
     if bit_count and bit_count < len(binary_str):
         binary_str = binary_str[:bit_count]
 
-    # Convert binary to timings
+    # Convert binary to timings - expanded method
     # Each bit represents a period of TE microseconds
-    # Positive values = signal high, negative = signal low
+    # Positive values = signal high (1), negative = signal low (0)
     timings = []
     if not binary_str:
         return timings
 
-    current_state = int(binary_str[0])
-    count = 1
-
-    for i in range(1, len(binary_str)):
-        bit = int(binary_str[i])
-        if bit == current_state:
-            count += 1
+    for bit in binary_str:
+        if bit == '1':
+            timings.append(te)
         else:
-            # Add timing for accumulated bits
-            timing_value = count * te
-            if current_state == 0:
-                timing_value = -timing_value
-            timings.append(timing_value)
-
-            # Reset for new state
-            current_state = bit
-            count = 1
-
-    # Add final timing
-    timing_value = count * te
-    if current_state == 0:
-        timing_value = -timing_value
-    timings.append(timing_value)
+            timings.append(-te)
 
     return timings
 
