@@ -11,19 +11,32 @@ from pathlib import Path
 def parse_sub_file(filename):
     """Parse a Flipper .sub file and extract RAW timing data"""
     timings = []
-    
+    protocol = None
+    te = None
+
     with open(filename, 'r') as f:
         in_raw_data = False
+        in_data_raw = False
+        data_raw_hex = []
+
         for line in f:
             line = line.strip()
-            
-            # Check if we're in a RAW_Data line
+
+            # Check protocol type
+            if line.startswith('Protocol:'):
+                protocol = line.split(':', 1)[1].strip()
+
+            # Get Time Element for BinRAW
+            if line.startswith('TE:'):
+                te = int(line.split(':', 1)[1].strip())
+
+            # Check if we're in a RAW_Data line (Protocol: RAW)
             if line.startswith('RAW_Data:'):
                 in_raw_data = True
                 # Extract numbers after "RAW_Data: "
                 data_part = line.split('RAW_Data:', 1)[1].strip()
                 numbers = data_part.split()
-                
+
                 for num in numbers:
                     try:
                         timings.append(int(num))
@@ -38,7 +51,66 @@ def parse_sub_file(filename):
                     except ValueError:
                         in_raw_data = False  # End of RAW data
                         break
-    
+
+            # Check if we're in Data_RAW line (Protocol: BinRAW)
+            elif line.startswith('Data_RAW:'):
+                in_data_raw = True
+                # Extract hex data after "Data_RAW: "
+                data_part = line.split('Data_RAW:', 1)[1].strip()
+                hex_values = data_part.split()
+                data_raw_hex.extend(hex_values)
+            elif in_data_raw and line and not any(line.startswith(prefix) for prefix in ['Filetype', 'Version', 'Frequency', 'Preset', 'Protocol', 'Bit', 'TE', 'Bit_RAW']):
+                # Continue reading hex data
+                hex_values = line.split()
+                if all(len(val) == 2 and all(c in '0123456789ABCDEFabcdef' for c in val) for val in hex_values):
+                    data_raw_hex.extend(hex_values)
+                else:
+                    in_data_raw = False
+
+        # Convert BinRAW hex data to timings
+        if protocol == 'BinRAW' and data_raw_hex and te:
+            timings = convert_binraw_to_timings(data_raw_hex, te)
+
+    return timings
+
+def convert_binraw_to_timings(hex_data, te):
+    """Convert BinRAW hex data to timing array using Time Element"""
+    # Convert hex strings to binary
+    binary_str = ''
+    for hex_byte in hex_data:
+        binary_str += format(int(hex_byte, 16), '08b')
+
+    # Convert binary to timings
+    # Each bit represents a period of TE microseconds
+    # Positive values = signal high, negative = signal low
+    timings = []
+    if not binary_str:
+        return timings
+
+    current_state = int(binary_str[0])
+    count = 1
+
+    for i in range(1, len(binary_str)):
+        bit = int(binary_str[i])
+        if bit == current_state:
+            count += 1
+        else:
+            # Add timing for accumulated bits
+            timing_value = count * te
+            if current_state == 0:
+                timing_value = -timing_value
+            timings.append(timing_value)
+
+            # Reset for new state
+            current_state = bit
+            count = 1
+
+    # Add final timing
+    timing_value = count * te
+    if current_state == 0:
+        timing_value = -timing_value
+    timings.append(timing_value)
+
     return timings
 
 def format_c_array(timings, array_name, values_per_line=20):
